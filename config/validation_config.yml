@@ -1,0 +1,15 @@
+# Validation Service Configuration
+base_directory: /app/data
+output_directory: validation-files
+models_directory: /app/models
+
+# File paths
+secuTrial_file: SSR_cases_of_2024.xlsx
+REVASC_file: report_SSR01_20250218-105747.xlsx
+id_log_file: EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx
+
+# Validation settings
+compare_values: true
+compare_types: true
+generate_report: true
+include_monthly_breakdown: true

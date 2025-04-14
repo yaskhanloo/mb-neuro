@@ -1,0 +1,8 @@
+jupyter
+notebook
+pandas
+numpy
+matplotlib
+openpyxl
+xlrd
+chardet

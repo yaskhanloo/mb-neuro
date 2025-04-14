@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  validation-service:
+    build:
+      context: .
+      dockerfile: validation-service/Dockerfile
+    container_name: epic-validation-service
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8888:8888"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+    networks:
+      - epic-data-network
+
+  import-service:
+    build:
+      context: .
+      dockerfile: import-service/Dockerfile
+    container_name: epic-import-service
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8889:8889"
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+    networks:
+      - epic-data-network
+
+networks:
+  epic-data-network:
+    driver: bridge
