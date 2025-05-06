@@ -5,6 +5,16 @@ This repository contains two microservices for validating and importing EPIC dat
 1. **EPIC Validation Service**: Validates EPIC exports against secuTrial data.
 2. **EPIC Import Service**: Merges EPIC data with secuTrial data and generates CSV files for import.
 
+```
+docker-compose down
+docker-compose build
+docker-compose up -d
+
+docker-compose logs validation-service
+docker-compose logs import-service
+
+```
+
 ## Prerequisites
 
 - Docker and Docker Compose

@@ -8,10 +8,9 @@ services:
     container_name: epic-validation-service
     volumes:
       - ./data:/app/data
-    ports:
-      - "8888:8888"
     environment:
       - NODE_ENV=${NODE_ENV:-development}
+      - BASE_DIR=/app/data
     networks:
       - epic-data-network
 
@@ -22,10 +21,9 @@ services:
     container_name: epic-import-service
     volumes:
       - ./data:/app/data
-    ports:
-      - "8889:8889"
     environment:
       - NODE_ENV=${NODE_ENV:-development}
+      - BASE_DIR=/app/data
     networks:
       - epic-data-network
 

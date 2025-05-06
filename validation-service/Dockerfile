@@ -11,21 +11,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY validation-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the notebook
-COPY validation-service/validation_EPIC2secuTrial_V4_20250227.ipynb .
-
 # Create default directories for data
 RUN mkdir -p /app/data/EPIC-files \
     /app/data/sT-files \
     /app/data/EPIC2sT-pipeline \
-    /app/data/EPIC-export-validation/validation-files
+    /app/data/EPIC-export-validation/validation-files \
+    /app/data/logs
 
-# Create startup script to launch Jupyter
-RUN echo '#!/bin/bash\necho "Starting Jupyter Notebook Server..."\njupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root' > /app/start-jupyter.sh && \
-    chmod +x /app/start-jupyter.sh
+# Copy source code
+COPY validation-service/src/ /app/src/
+COPY shared/ /app/shared/
 
-# Expose Jupyter port
-EXPOSE 8888
+# Create an entrypoint script
+RUN echo '#!/bin/bash\necho "Starting EPIC-secuTrial Validation Service..."\npython /app/src/main.py' > /app/start-validation.sh && \
+    chmod +x /app/start-validation.sh
 
-# Command to run Jupyter
-CMD ["/app/start-jupyter.sh"]
+# Command to run the script
+CMD ["/app/start-validation.sh"]
