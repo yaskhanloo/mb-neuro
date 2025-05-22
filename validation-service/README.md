@@ -1,14 +1,10 @@
 # EPIC-secuTrial Validation Service
 
-## Overview
-
-The Enhanced EPIC-secuTrial Validation Service provides comprehensive data quality validation between EPIC exports and secuTrial data. This service has been updated with complete comparison logic from the original notebook to provide detailed validation reports including monthly breakdowns and variable-level statistics.
-
 ## Features
 
 ### Core Validation Capabilities
 - **Comprehensive Data Comparison**: Compares values and data types between EPIC and secuTrial datasets
-- **Monthly Statistical Analysis**: Provides month-by-month breakdown of validation results (April-December)
+- **Monthly Statistical Analysis**: Provides month-by-month breakdown of validation results
 - **Variable-level Statistics**: Detailed analysis of each variable's validation performance
 - **Type-aware Comparisons**: Handles different data types appropriately (integers, floats, booleans, dates, strings)
 - **Missing Data Analysis**: Identifies and reports missing data patterns in both systems
