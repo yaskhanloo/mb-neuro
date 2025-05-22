@@ -1,6 +1,6 @@
-# EPIC-Stroke Data Pipeline
+# EPIC2secuTrial Stroke Data Pipeline
 
-## 🔄 Current State vs the Notebooks
+## 🔄 Current State
 
 ### What's Implemented:
 - ✅ Basic service structure
@@ -47,7 +47,7 @@
 3. Check that log files are created properly
 
 ### Step 2: Implement Missing Logic from Notebooks
-We need to port these key functions from your notebooks:
+Need to port these key functions from notebooks:
 
 #### From validation notebook:
 - `compare_epic_secuTrial()` - The main comparison function
@@ -61,7 +61,7 @@ We need to port these key functions from your notebooks:
 - Data type conversion functions
 
 ### Step 3: Configure Logging Properly
-- Define what specific logs you want
+- Define what specific logs I want
 - Set up structured logging for different components
 - Configure log rotation and retention
 

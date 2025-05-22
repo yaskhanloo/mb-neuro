@@ -1,3 +1,4 @@
+# Docker Compose version
 version: '3.8'
 
 services:
@@ -16,9 +17,7 @@ services:
       - PYTHONUNBUFFERED=1  # Ensure logs appear in real-time
     networks:
       - epic-data-network
-    restart: unless-stopped
-    depends_on:
-      - import-service  # Run validation after import (optional)
+    #restart: unless-stopped
 
   import-service:
     build:
@@ -35,9 +34,11 @@ services:
       - PYTHONUNBUFFERED=1  # Ensure logs appear in real-time
     networks:
       - epic-data-network
-    restart: unless-stopped
+    #restart: unless-stopped
+    depends_on:
+      - validation-service  # Run import after validation service
 
-  # Optional: Add a database service for future use
+  # Database service for future use
   # database:
   #   image: mysql:8.0
   #   container_name: epic-database
