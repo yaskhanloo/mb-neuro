@@ -1,0 +1,185 @@
+# Enhanced Validation Service Configuration
+base_directory: /app/data
+output_directory: validation-files
+models_directory: /app/models
+
+# File paths (will be auto-detected if not specified)
+secuTrial_file: SSR_cases_of_2024.xlsx
+REVASC_file: report_SSR01_20250218-105747.xlsx
+id_log_file: EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx
+mapping_file: EPIC2sT-pipeline/map_epic2sT_code_V2_20250224.xlsx
+
+# Validation settings
+compare_values: true
+compare_types: true
+generate_report: true
+include_monthly_breakdown: true
+include_variable_statistics: true
+restructure_mismatches: true
+
+# Report settings
+report_format: markdown
+save_individual_reports: true
+save_summary_statistics: true
+save_original_dataframes: true
+
+# Comparison settings
+months_to_analyze: [4, 5, 6, 7, 8, 9, 10, 11, 12]  # April through December
+month_names:
+  4: 'April'
+  5: 'May'
+  6: 'June'
+  7: 'July'
+  8: 'August'
+  9: 'September'
+  10: 'October'
+  11: 'November'
+  12: 'December'
+
+# Value mappings (can be extended as needed)
+value_mappings:
+  yes_no_columns:
+    - 'flow.iat_stentintracran'
+    - 'flow.iat_stentextracran'
+    - 'flow.stroke_pre'
+    - 'flow.tia_pre'
+    - 'flow.ich_pre'
+    - 'flow.hypertension'
+    - 'flow.diabetes'
+    - 'flow.hyperlipidemia'
+    - 'flow.smoking'
+    - 'flow.atrialfib'
+    - 'flow.chd'
+    - 'flow.lowoutput'
+    - 'flow.pad'
+    - 'flow.decompression'
+    - 'img.iat_mech'
+    - 'img.follow_mra'
+    - 'img.follow_cta'
+    - 'img.follow_ultrasound'
+    - 'img.follow_dsa'
+    - 'img.follow_tte'
+    - 'img.follow_tee'
+    - 'img.follow_holter'
+    - 'med.aspirin_pre'
+    - 'med.clopidogrel_pre'
+    - 'med.prasugrel_pre'
+    - 'med.ticagrelor_pre'
+    - 'med.dipyridamole_pre'
+    - 'med.vka_pre'
+    - 'med.rivaroxaban_pre'
+    - 'med.dabigatran_pre'
+    - 'med.apixaban_pre'
+    - 'med.edoxaban_pre'
+    - 'med.parenteralanticg_pre'
+    - 'med.antihypertensive_pre'
+    - 'med.antilipid_pre'
+    - 'med.hormone_pre'
+    - 'med.treat_antiplatelet'
+    - 'med.treat_anticoagulant'  
+    - 'med.treat_ivt'
+
+  bilateral_columns:
+    - 'flow.mca'
+    - 'flow.aca'
+    - 'flow.pca'
+    - 'flow.vertebrobasilar'
+
+  specific_mappings:
+    'enct.non_swiss':
+      true: 'yes'
+    'enct.sex':
+      1: 'Male'
+      2: 'Female'
+    'enct.transport':
+      1: 'Ambulance'
+      2: 'Helicopter'
+      3: 'Other (taxi,self,relatives,friends...)'
+    'enct.discharge_destinat':
+      1: 'Home'
+      2: 'Other acute care hospital'
+      3: 'Rehabilitation Hospital'
+      4: 'Nursing home, palliative care center, or other medical facility'
+    'flow.firstangio_result':
+      2: 'no'
+      3: 'yes'
+    'flow.prostheticvalves':
+      0: 'None'
+      1: 'Biological'
+      2: 'Mechanical'
+    'img.firstimage_type':
+      1: 'CT'
+      2: 'MRI'
+      3: 'CT (external)'
+      4: 'MRI (external)'
+
+# Data type handling
+data_types:
+  float_precision_mapping:
+    'float-1': 1
+    'float-2': 2
+    'float-3': 3
+
+# Missing value indicators to replace
+missing_value_indicators:
+  - -9999
+  - ''
+  - 'null'
+  - 'NULL'
+  - 'nan'
+  - 'NaN'
+  - '<na>'
+  - 'nat'
+  - 'NaT'
+
+# File detection patterns
+file_patterns:
+  epic_merge_order:
+    encounters: 'enct.'
+    flowsheet: 'flow.'
+    imaging: 'img.'
+    lab: 'lab.'
+    medication: 'med.'
+    monitor: 'mon.'
+
+# Output file naming
+output_files:
+  validation_report: 'validation_report_{timestamp}.md'
+  mismatched_values: 'report_mismatched_values_{timestamp}.xlsx'
+  monthly_stats: 'monthly_validation_stats_{timestamp}.xlsx'
+  epic_common: 'df_EPIC_common_{timestamp}.xlsx'
+  securial_common: 'df_secuTrial_common_{timestamp}.xlsx'
+
+# Logging configuration
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file_rotation: daily
+  max_log_files: 30
+
+# Performance settings
+performance:
+  chunk_size: 10000  # For large dataset processing
+  memory_threshold: 0.8  # Memory usage threshold before chunking
+  max_workers: 4  # For parallel processing when applicable
+
+# Error handling
+error_handling:
+  continue_on_missing_files: false
+  continue_on_mapping_errors: true
+  max_retries: 3
+  retry_delay: 1  # seconds
+
+# Validation thresholds
+validation_thresholds:
+  min_matching_percentage: 50.0
+  max_missing_percentage: 30.0
+  warning_mismatch_percentage: 10.0
+
+# Email notifications (if configured)
+notifications:
+  enabled: false
+  email_recipients: []
+  send_on_completion: true
+  send_on_error: true
+  include_summary: true
