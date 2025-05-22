@@ -40,135 +40,94 @@ def setup_logging():
 logger = setup_logging()
 
 def read_and_modify_secuTrial_export(df):
-    """Process secuTrial export dataframe"""
+    """
+    Process secuTrial export dataframe by removing metadata rows and setting proper headers.
+    
+    SecuTrial exports typically have:
+    - Rows 0-5: Metadata/headers
+    - Row 6: Column names
+    - Row 7: Often empty or contains additional metadata
+    - Row 8+: Actual data
+    """
     logger.info("Processing secuTrial export dataframe")
     try:
-        df = df.drop([7])                   # Remove row 8 in Excel
-        df = df.iloc[6:]                    # Skip the first 6 rows
-        df.columns = df.iloc[0]             # Use row 6 as the header
-        df = df[1:].reset_index(drop=True)  # Drop the header row and reset index
-        logger.info(f"Successfully processed secuTrial dataframe with shape {df.shape}")
-        return df
+        # One-liner approach: skip metadata, set headers, clean up
+        return (df.iloc[6:]                    # Skip metadata rows
+                 .pipe(lambda x: x.set_axis(x.iloc[0], axis=1))  # Set column names
+                 .iloc[1:]                     # Remove header row
+                 .reset_index(drop=True)       # Reset index
+                 .dropna(how='all'))           # Remove empty rows
     except Exception as e:
-        logger.error(f"Error in read_and_modify_secuTrial_export: {e}")
+        logger.error(f"Error processing secuTrial export: {e}")
         return None
 
 def safe_read_file(file_path, custom_reader=None):
     """Safely read a file (Excel or CSV) with an optional custom reader function"""
     file_path = Path(file_path)
+    
     if not file_path.exists():
         logger.error(f"File not found: {file_path}")
         return None
-        
+    
+    # File readers lookup
+    readers = {
+        '.xlsx': lambda p: pd.read_excel(p, engine='openpyxl', header=None),
+        '.xls': lambda p: pd.read_excel(p, engine='xlrd', header=None),
+        '.csv': lambda p: pd.read_csv(p)
+    }
+    
+    extension = file_path.suffix.lower()
+    reader = readers.get(extension)
+    
+    if not reader:
+        logger.error(f"Unsupported file type: {extension}. Supported: {list(readers.keys())}")
+        return None
+    
     try:
-        file_extension = file_path.suffix.lower()
-        logger.info(f"Reading file: {file_path} with extension {file_extension}")
+        logger.info(f"Reading {extension} file: {file_path.name}")
+        df = reader(file_path)
+        result = custom_reader(df) if custom_reader else df
         
-        if file_extension in [".xlsx", ".xls"]:
-            df = pd.read_excel(file_path, engine='openpyxl' if file_extension == ".xlsx" else 'xlrd', header=None)
-        elif file_extension == ".csv":
-            df = pd.read_csv(file_path)
-        else:
-            logger.error(f"Unsupported file type: {file_extension}")
-            return None
+        if result is not None:
+            logger.info(f"Successfully read file with shape: {result.shape}")
         
-        return custom_reader(df) if custom_reader else df
+        return result
         
     except Exception as e:
-        logger.error(f"Error reading file at {file_path}: {e}")
+        logger.error(f"Failed to read {file_path.name}: {e}")
         return None
 
 def detect_encoding(file_path):
     """Detect the encoding of a file using chardet"""
-    with open(file_path, 'rb') as f:
-        raw_data = f.read(10000)
-    result = chardet.detect(raw_data)
-    return result['encoding']
+    try:
+        with open(file_path, 'rb') as f:
+            return chardet.detect(f.read(10000)).get('encoding', 'utf-8')
+    except Exception:
+        return 'utf-8'
 
 def merge_single_file(file_path, merge_column, merged_df, prefix=""):
     """
-    Merges a single file into the main DataFrame with optional prefixing of columns.
-    Handles tab-delimited CSV files.
+    Merge a single file into the main DataFrame with optional column prefixing.
     
-    Parameters:
-        file_path (str or Path): Path to file.
-        merge_column (str): Column name to merge on.
-        merged_df (pd.DataFrame): The main DataFrame to merge into.
-        prefix (str): Optional prefix to add to column names for this file.
+    Args:
+        file_path: Path to the file
+        merge_column: Column name to merge on
+        merged_df: Main DataFrame to merge into
+        prefix: Optional prefix for column names
         
     Returns:
-        pd.DataFrame: Updated merged DataFrame.
+        Updated merged DataFrame
     """
-    # Determine file extension
-    file_extension = file_path.suffix.lower()
-    
-    # Try to detect encoding for CSV files
-    detected_encoding = None
-    if file_extension == ".csv":
-        detected_encoding = detect_encoding(file_path)
-        logger.info(f"Detected encoding for {file_path.name}: {detected_encoding}")
-    
-    # Read file based on its extension
-    try:
-        if file_extension == ".xlsx":
-            df = pd.read_excel(file_path, engine='openpyxl')
-        elif file_extension == ".xls":
-            df = pd.read_excel(file_path, engine='xlrd')
-        elif file_extension == ".csv":
-            # Try with the detected encoding and tab delimiter
-            try:
-                df = pd.read_csv(file_path, encoding=detected_encoding, sep='\t')
-            except:
-                # If that fails, try common encodings
-                encodings_to_try = ['latin1', 'iso-8859-1', 'cp1252', 'utf-8-sig']
-                for encoding in encodings_to_try:
-                    try:
-                        df = pd.read_csv(file_path, encoding=encoding, sep='\t')
-                        logger.info(f"Successfully read {file_path.name} with encoding: {encoding}")
-                        break
-                    except Exception as e:
-                        logger.info(f"Failed with encoding {encoding}: {e}")
-                else:
-                    # Last resort: try with different delimiters
-                    delimiters = [',', ';', '|']
-                    for delim in delimiters:
-                        try:
-                            df = pd.read_csv(file_path, encoding='latin1', sep=delim)
-                            logger.info(f"Successfully read {file_path.name} with delimiter: '{delim}'")
-                            break
-                        except Exception as e:
-                            logger.info(f"Failed with delimiter '{delim}': {e}")
-                    else:
-                        raise ValueError(f"Could not read file with any encoding or delimiter")
-        else:
-            raise ValueError(f"Unsupported file type: {file_extension}")
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
-        return merged_df  # Return the existing DataFrame without merging
-    
-    # Check if merge column exists
-    if merge_column not in df.columns:
-        logger.warning(f"Warning: Merge column '{merge_column}' not found in {file_path.name}")
-        logger.warning(f"Available columns: {df.columns.tolist()}")
+    # Read file
+    df = safe_read_file(file_path)
+    if df is None or merge_column not in df.columns:
         return merged_df
-        
-    # Print number of columns in the current file
-    logger.info(f"File: {file_path.name} | Columns: {len(df.columns)} , Rows: {df.shape[0]}")
     
-    # Add prefix to columns except the merge column
-    df.rename(columns={col: f"{prefix}{col}" for col in df.columns if col != merge_column}, inplace=True)
+    # Add prefix and merge
+    if prefix:
+        df = df.rename(columns={col: f"{prefix}{col}" for col in df.columns if col != merge_column})
     
-    # Merge the DataFrame into the main DataFrame
-    if merged_df.empty:
-        return df
-    else:
-        # Check if merge column exists in both DataFrames
-        if merge_column in merged_df.columns:
-            return merged_df.merge(df, on=merge_column, how="outer")
-        else:
-            logger.warning(f"Warning: Merge column '{merge_column}' not found in merged DataFrame")
-            logger.warning(f"Merged DataFrame columns: {merged_df.columns.tolist()}")
-            return merged_df
+    return df if merged_df.empty else merged_df.merge(df, on=merge_column, how="outer")
 
 def merge_excel_files(directory, merge_column):
     """
@@ -181,45 +140,29 @@ def merge_excel_files(directory, merge_column):
     Returns:
         pd.DataFrame
     """
-    # Define merge order and column prefixes
-    merge_order = {
-        "encounters": "enct.",
-        "flowsheet": "flow.",
-        "imaging": "img.",
-        "lab": "lab.",
-        "medication": "med.",
-        "monitor": "mon."
-    }
-    
     directory = Path(directory)
+    
     if not directory.exists():
         raise FileNotFoundError(f"Directory {directory} does not exist.")
     
+    # Get prefix for filename
+    def get_prefix(filename):
+        name = filename.lower()
+        if 'enc' in name: return 'enct.'
+        if 'flow' in name: return 'flow.'
+        if 'imag' in name or 'img' in name: return 'img.'
+        if 'lab' in name: return 'lab.'
+        if 'med' in name: return 'med.'
+        if 'mon' in name: return 'mon.'
+        return ""
+    
+    # Find and merge all supported files
     merged_df = pd.DataFrame()
-    
-    # Merge files in the defined order
-    for keyword, prefix in merge_order.items():
-        files_found = False
-        for file in directory.glob(f"*{keyword}*"):
-            if file.suffix.lower() in [".xlsx", ".xls", ".csv"]:  # Check for valid file extensions
-                files_found = True
-                merged_df = merge_single_file(file, merge_column, merged_df, prefix)
-        
-        if not files_found and keyword != "medication":  # Special handling for medication(s)
-            # Try with similar names (e.g., check for "medications" if "medication" not found)
-            for file in directory.glob(f"*{keyword}s*"):
-                if file.suffix.lower() in [".xlsx", ".xls", ".csv"]:
-                    files_found = True
-                    merged_df = merge_single_file(file, merge_column, merged_df, prefix)
-            
-            if not files_found:
-                logger.warning(f"No files matching '{keyword}' found in {directory}")
-    
-    # Process any remaining files
-    for file in directory.glob("*"):
-        if file.suffix.lower() in [".xlsx", ".xls", ".csv"]:
-            if not any(keyword in file.stem.lower() for keyword in merge_order):
-                merged_df = merge_single_file(file, merge_column, merged_df)
+    for file_path in directory.glob("*.{xlsx,xls,csv}"):
+        if file_path.suffix.lower() in {'.xlsx', '.xls', '.csv'}:
+            prefix = get_prefix(file_path.stem)
+            merged_df = merge_single_file(file_path, merge_column, merged_df, prefix)
+            logger.info(f"Merged {file_path.name} -> {prefix or 'no prefix'}")
     
     return merged_df
 
