@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
 EPIC-secuTrial Validation Service
-Converted from Jupyter notebook to standalone Python script with logging
-
-Original notebook: validation_EPIC2secuTrial_V4_20250227.ipynb
 Created by: Yasaman Safarkhanlo
 """
 
@@ -80,10 +77,14 @@ def safe_read_file(file_path, custom_reader=None):
 
 def detect_encoding(file_path):
     """Detect the encoding of a file using chardet"""
-    with open(file_path, 'rb') as f:
-        raw_data = f.read(10000)
-    result = chardet.detect(raw_data)
-    return result['encoding']
+    try:
+        with open(file_path, 'rb') as f:
+            raw_data = f.read(10000)
+        result = chardet.detect(raw_data)
+        return result['encoding']
+    except Exception as e:
+        logger.error(f"Error detecting encoding for {file_path}: {e}")
+        return 'utf-8'  # Default fallback
 
 def merge_single_file(file_path, merge_column, merged_df, prefix=""):
     """
@@ -127,7 +128,7 @@ def merge_single_file(file_path, merge_column, merged_df, prefix=""):
                         logger.info(f"Successfully read {file_path.name} with encoding: {encoding}")
                         break
                     except Exception as e:
-                        logger.info(f"Failed with encoding {encoding}: {e}")
+                        logger.debug(f"Failed with encoding {encoding}: {e}")
                 else:
                     # Last resort: try with different delimiters
                     delimiters = [',', ';', '|']
@@ -137,7 +138,7 @@ def merge_single_file(file_path, merge_column, merged_df, prefix=""):
                             logger.info(f"Successfully read {file_path.name} with delimiter: '{delim}'")
                             break
                         except Exception as e:
-                            logger.info(f"Failed with delimiter '{delim}': {e}")
+                            logger.debug(f"Failed with delimiter '{delim}': {e}")
                     else:
                         raise ValueError(f"Could not read file with any encoding or delimiter")
         else:
@@ -201,11 +202,11 @@ def merge_excel_files(directory, merge_column):
     for keyword, prefix in merge_order.items():
         files_found = False
         for file in directory.glob(f"*{keyword}*"):
-            if file.suffix.lower() in [".xlsx", ".xls", ".csv"]:  # Check for valid file extensions
+            if file.suffix.lower() in [".xlsx", ".xls", ".csv"]:
                 files_found = True
                 merged_df = merge_single_file(file, merge_column, merged_df, prefix)
         
-        if not files_found and keyword != "medication":  # Special handling for medication(s)
+        if not files_found and keyword != "medication":
             # Try with similar names (e.g., check for "medications" if "medication" not found)
             for file in directory.glob(f"*{keyword}s*"):
                 if file.suffix.lower() in [".xlsx", ".xls", ".csv"]:

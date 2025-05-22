@@ -8,11 +8,17 @@ services:
     container_name: epic-validation-service
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs  
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - BASE_DIR=/app/data
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1  # Ensure logs appear in real-time
     networks:
       - epic-data-network
+    restart: unless-stopped
+    depends_on:
+      - import-service  # Run validation after import (optional)
 
   import-service:
     build:
@@ -21,12 +27,38 @@ services:
     container_name: epic-import-service
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs  
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - BASE_DIR=/app/data
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1  # Ensure logs appear in real-time
     networks:
       - epic-data-network
+    restart: unless-stopped
+
+  # Optional: Add a database service for future use
+  # database:
+  #   image: mysql:8.0
+  #   container_name: epic-database
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-ServeMySql2009Secure}
+  #     - MYSQL_DATABASE=${DB_NAME:-medical-server}
+  #     - MYSQL_USER=${DB_USER:-epic_user}
+  #     - MYSQL_PASSWORD=${DB_PASSWORD:-ServeMySql2009Secure}
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+  #     - ./database/init:/docker-entrypoint-initdb.d
+  #   ports:
+  #     - "3306:3306"
+  #   networks:
+  #     - epic-data-network
+  #   restart: unless-stopped
 
 networks:
   epic-data-network:
     driver: bridge
+
+# Uncomment when adding database
+# volumes:
+#   mysql_data:

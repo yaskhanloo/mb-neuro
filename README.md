@@ -1,128 +1,98 @@
 # EPIC-Stroke Data Pipeline
 
-This repository contains two microservices for validating and importing EPIC data into secuTrial:
+## 🔄 Current State vs the Notebooks
 
-1. **EPIC Validation Service**: Validates EPIC exports against secuTrial data.
-2. **EPIC Import Service**: Merges EPIC data with secuTrial data and generates CSV files for import.
+### What's Implemented:
+- ✅ Basic service structure
+- ✅ File reading and merging functions
+- ✅ Logging framework
+- ✅ Error handling
+- ✅ Docker containerization
 
-```
-docker-compose down
-docker-compose build
-docker-compose up -d
+### What Needs Implementation:
+- ❌ **Complete comparison logic** in validation service
+- ❌ **Data type conversion and mapping** functions
+- ❌ **Statistical analysis and reporting** 
+- ❌ **Monthly breakdown calculations**
+- ❌ **Variable-level statistics**
+- ❌ **Report generation** (markdown/excel outputs)
 
-docker-compose logs validation-service
-docker-compose logs import-service
+## 🚀 How to Run Current Setup
 
-```
+1. **Make setup script executable:**
+   ```bash
+   chmod +x setup.sh
+   ```
 
-## Prerequisites
+2. **Run setup:**
+   ```bash
+   ./setup.sh
+   ```
 
-- Docker and Docker Compose
-- secuTrial export files
+3. **Test the basic setup:**
+   ```bash
+   python3 test_setup.py
+   ```
 
-## Directory Structure
+4. **Run the services:**
+   ```bash
+   docker-compose up
+   ```
 
-Place your data files in the following structure:
+## 📋 Next Steps (In Order)
 
-```
-data/
-├── sT-files/
-│   └── export-/ (secuTrial export directories)
-├── EPIC-files/
-│   └── export-/ (EPIC export directories) - will change 
-└── EPIC2sT-pipeline/
-    ├── map_epic2sT_code_V2_20250224.xlsx
-    └── Identification_log_SSR_2024_ohne PW_26.03.25.xlsx
-```
+### Step 1: Get Basic Setup Running
+1. Run the setup script
+2. Verify Docker containers start without errors
+3. Check that log files are created properly
 
-## Running the Services with Docker
+### Step 2: Implement Missing Logic from Notebooks
+We need to port these key functions from your notebooks:
 
-1. **Build and start the services**:
+#### From validation notebook:
+- `compare_epic_secuTrial()` - The main comparison function
+- `restructure_mismatched_data()` - For report formatting
+- `generate_comparison_report()` - Report generation
+- All the data type conversion and mapping logic
 
-```bash
-docker-compose up -d
-```
+#### From import notebook:
+- Complete `create_import_file()` implementation
+- Value mapping dictionaries
+- Data type conversion functions
 
-2. **Check logs**:
+### Step 3: Configure Logging Properly
+- Define what specific logs you want
+- Set up structured logging for different components
+- Configure log rotation and retention
 
-- Validation Service:
-  ```bash
-  docker-compose logs validation-service
-  ```
+### Step 4: Database Integration
+- Design database schema
+- Implement database connections
+- Replace CSV/Excel operations with database operations
 
-- Import Service:
-  ```bash
-  docker-compose logs import-service
-  ```
+## 🎯 Priority Tasks
 
-3. **Access the output files**:
+### HIGH PRIORITY (Do Next):
+1. **Test current setup** - Make sure containers run
+2. **Port comparison logic** from validation notebook
+3. **Port import logic** from import notebook
+4. **Test with sample data**
 
-- Validation reports: `data/validation-files/`
-- Import files: `data/import-files/`
+### MEDIUM PRIORITY:
+1. Implement comprehensive logging
+2. Add error recovery mechanisms
+3. Optimize performance
 
-## Configuration
+### LOW PRIORITY:
+1. Database integration
+2. Advanced reporting features
+3. Monitoring and alerting
 
-Adjust service configuration files located in the `config/` directory:
+## 🤔 Questions for You
 
-- `validation_config.yml`: EPIC Validation Service settings
-- `import_config.yml`: EPIC Import Service settings
+1. **Which notebook functions are most critical** to port first?
+2. **What specific log information** do you need for your reviewers?
+3. **Do you have sample data** we can use for testing?
+4. **What database system** do you want to use (MySQL, PostgreSQL, etc.)?
 
-Additionally, create an `.env` file in your project's root directory to manage database connections:
-
-**`.env`**:
-
-```
-NODE_ENV=development
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=medical-server
-DB_USER=root
-DB_PASSWORD=ServeMySql2009Secure
-```
-
-## Development Workflow and CI/CD - not there yet
-
-This repository includes automated CI/CD using GitHub Actions. Configuration details are available in:
-
-**`.github/workflows/ci-cd.yml`**
-
-The pipeline performs:
-
-- Dependency installation
-- Linting with `flake8`
-- Testing with `pytest` and coverage reporting
-- Docker image building and publishing to DockerHub (on main branch)
-
-Ensure secrets (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) are configured in your GitHub repository settings.
-
-## Schedule-Based Automation
-
-Automate periodic execution of validation and import processes by creating a cron job script:
-
-**`automation/run_pipeline.sh`**
-
----
-
-## Testing Without Docker
-
-1. **Set up a Python virtual environment**:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-2. **Install dependencies**:
-
-```bash
-pip install -r validation-service/requirements.txt
-pip install -r import-service/requirements.txt
-```
-
-3. **Run services locally**:
-
-```bash
-export PYTHONPATH=.
-python validation-service/src/main.py
-python import-service/src/main.py
-```
+Let me know which step you'd like to tackle first!
