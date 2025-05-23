@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
 EPIC-secuTrial Validation Service
-Enhanced with complete comparison logic from notebook
-
-Original notebook: validation_EPIC2secuTrial_V4_20250227.ipynb
 Created by: Yasaman Safarkhanlo
 """
 
@@ -35,12 +32,10 @@ def setup_logging():
             logging.StreamHandler()
         ]
     )
-
     return logging.getLogger('epic-validation')
 
 logger = setup_logging()
 
-# Read files
 def read_and_modify_secuTrial_export(df):
     """
     Process secuTrial export dataframe by removing metadata rows and setting proper headers.
@@ -95,60 +90,75 @@ def safe_read_file(file_path, custom_reader=None):
     
     return None
 
-# EPIC merge
-def merge_single_file(file_path, merge_column, merged_df, prefix=""):
+def merge_single_epic_file(file_path, merge_column, merged_df, prefix=""):
     """
-    Merge a single file into the main DataFrame with optional column prefixing.
+    Merge a single EPIC file into the main DataFrame with optional column prefixing.
     """
-    # Read file
-    df = safe_read_file(file_path)
-    if df is None or merge_column not in df.columns:
-        logger.warning(f"Skipping {file_path.name}: file read failed or merge column '{merge_column}' not found")
-        return merged_df
+    logger.info(f"Processing file: {file_path.name}")
     
-    # Add prefix and merge
+    df = safe_read_file(file_path)
+    if df is None:
+        logger.warning(f"Failed to read {file_path.name}")
+        return merged_df
+
+    if merge_column not in df.columns:
+        logger.warning(f"Merge column '{merge_column}' not found in {file_path.name}")
+        return merged_df
+
+    # Add prefix to all columns except the merge column
     if prefix:
         df = df.rename(columns={col: f"{prefix}{col}" for col in df.columns if col != merge_column})
-    
-    return df if merged_df.empty else merged_df.merge(df, on=merge_column, how="outer")
 
-def merge_excel_files(directory, merge_column):
+    # Merge logic
+    if merged_df.empty:
+        result_df = df.copy()
+        logger.info(f"Using {file_path.name} as base: shape={result_df.shape}")
+    else:
+        result_df = merged_df.merge(df, on=merge_column, how="outer")
+        logger.info(f"Merged {file_path.name}: shape={df.shape} → total={result_df.shape}")
+
+    return result_df
+
+def merge_all_epic_files(directory, merge_column):
     """
     Merges all EPIC files in a directory based on a specific column, in a defined order.
     """
     directory = Path(directory)
-    
     if not directory.exists():
-        raise FileNotFoundError(f"Directory {directory} does not exist.")
-    
-    # Get prefix for filename
+        logger.error(f"Directory not found: {directory}")
+        raise FileNotFoundError(f"{directory} does not exist.")
+
+    file_patterns = ["*.xlsx", "*.xls", "*.csv"]
+    all_files = [f for pattern in file_patterns for f in directory.glob(pattern)]
+    logger.info(f"Found {len(all_files)} data files in {directory.name}")
+
+    file_order = ['enc', 'flow', 'imag', 'img', 'lab', 'med', 'mon']
+
+    def file_priority(file_path):
+        name = file_path.stem.lower()
+        for i, keyword in enumerate(file_order):
+            if keyword in name:
+                return i
+        return len(file_order)
+
     def get_prefix(filename):
         name = filename.lower()
-        prefixes = {
-            'enc': 'enct.', 
-            'flow': 'flow.', 
-            'imag': 'img.', 
-            'img': 'img.',
-            'lab': 'lab.', 
-            'med': 'med.', 
-            'mon': 'mon.'
-        }
-        return next((prefix for key, prefix in prefixes.items() if key in name), "")
-    
-    # Find all supported files (FIXED: proper glob patterns)
-    supported_extensions = ['.xlsx', '.xls', '.csv']
-    all_files = [f for f in directory.iterdir() 
-                 if f.is_file() and f.suffix.lower() in supported_extensions]
-    
-    logger.info(f"Found {len(all_files)} files to merge: {[f.name for f in all_files]}")
-    
-    # Merge all files
+        if 'enc' in name: return 'enct.'
+        if 'flow' in name: return 'flow.'
+        if 'imag' in name or 'img' in name: return 'img.'
+        if 'lab' in name: return 'lab.'
+        if 'med' in name: return 'med.'
+        if 'mon' in name: return 'mon.'
+        return ""
+
+    sorted_files = sorted(all_files, key=file_priority)
+
     merged_df = pd.DataFrame()
-    for file_path in all_files:
+    for file_path in sorted_files:
         prefix = get_prefix(file_path.stem)
-        merged_df = merge_single_file(file_path, merge_column, merged_df, prefix)
-        logger.info(f"Merged {file_path.name} -> {prefix or 'no prefix'} (shape: {merged_df.shape})")
-    
+        merged_df = merge_single_epic_file(file_path, merge_column, merged_df, prefix)
+
+    logger.info(f"Final merged shape: {merged_df.shape}")
     return merged_df
 
 # Comparison function
@@ -183,28 +193,63 @@ def compare_epic_secuTrial(epic_df, secuTrial_df, mapping_df, value_mappings=Non
     secuTrial_df_copy.replace(-9999, pd.NA, inplace=True)
 
     # Ensure necessary columns exist before comparison
-    if "FID" not in epic_df_copy.columns or "SSR" not in epic_df_copy.columns:
-        logger.error("EPIC DataFrame must contain 'FID' and 'SSR' columns.")
-        raise ValueError("EPIC DataFrame must contain 'FID' and 'SSR' columns.")
-    if "FID" not in secuTrial_df_copy.columns or "SSR" not in secuTrial_df_copy.columns:
-        logger.error("SecuTrial DataFrame must contain 'FID' and 'SSR' columns.")
-        raise ValueError("SecuTrial DataFrame must contain 'FID' and 'SSR' columns.")
+    required_epic_cols = ["FID", "SSR"]
+    required_secu_cols = ["FID", "SSR"]
+    
+    missing_epic_cols = [col for col in required_epic_cols if col not in epic_df_copy.columns]
+    missing_secu_cols = [col for col in required_secu_cols if col not in secuTrial_df_copy.columns]
+    
+    if missing_epic_cols:
+        logger.error(f"EPIC DataFrame missing required columns: {missing_epic_cols}")
+        logger.info(f"Available EPIC columns: {list(epic_df_copy.columns)}")
+        raise ValueError(f"EPIC DataFrame must contain {required_epic_cols} columns.")
         
-    # Check for date columns
-    if "enct.arrival_date" not in epic_df_copy.columns:
-        logger.error("EPIC DataFrame must contain 'enct.arrival_date' column for monthly breakdown.")
-        raise ValueError("EPIC DataFrame must contain 'enct.arrival_date' column for monthly breakdown.")
-    if "Arrival at hospital" not in secuTrial_df_copy.columns:
-        logger.error("SecuTrial DataFrame must contain 'Arrival at hospital' column for monthly breakdown.")
-        raise ValueError("SecuTrial DataFrame must contain 'Arrival at hospital' column for monthly breakdown.")
+    if missing_secu_cols:
+        logger.error(f"SecuTrial DataFrame missing required columns: {missing_secu_cols}")
+        logger.info(f"Available secuTrial columns: {list(secuTrial_df_copy.columns)}")
+        raise ValueError(f"SecuTrial DataFrame must contain {required_secu_cols} columns.")
+        
+    # Check for date columns (with more flexible matching)
+    epic_date_col = None
+    secu_date_col = None
+    
+    # Look for date columns in EPIC
+    possible_epic_date_cols = ['enct.arrival_date', 'arrival_date', 'DATE']
+    for col in possible_epic_date_cols:
+        if col in epic_df_copy.columns:
+            epic_date_col = col
+            break
+            
+    # Look for date columns in secuTrial
+    possible_secu_date_cols = ['Arrival at hospital', 'arrival_date', 'DATE']
+    for col in possible_secu_date_cols:
+        if col in secuTrial_df_copy.columns:
+            secu_date_col = col
+            break
+    
+    if not epic_date_col:
+        logger.warning("No date column found in EPIC data. Monthly breakdown will be limited.")
+        logger.info(f"Available EPIC columns: {list(epic_df_copy.columns)}")
+    
+    if not secu_date_col:
+        logger.warning("No date column found in secuTrial data. Monthly breakdown will be limited.")
+        logger.info(f"Available secuTrial columns: {list(secuTrial_df_copy.columns)}")
 
-    # Convert date columns
-    epic_df_copy['DATE'] = pd.to_datetime(epic_df_copy['enct.arrival_date'], errors='coerce')
-    secuTrial_df_copy['DATE'] = pd.to_datetime(secuTrial_df_copy['Arrival at hospital'], errors='coerce')
+    # Convert date columns if available
+    if epic_date_col:
+        epic_df_copy['DATE'] = pd.to_datetime(epic_df_copy[epic_date_col], errors='coerce')
+    
+    if secu_date_col:
+        secuTrial_df_copy['DATE'] = pd.to_datetime(secuTrial_df_copy[secu_date_col], errors='coerce')
 
     # Create a set of (FID, SSR) pairs that exist in both DataFrames
-    matching_keys = set(epic_df_copy[['FID', 'SSR']].apply(tuple, axis=1)) & set(secuTrial_df_copy[['FID', 'SSR']].apply(tuple, axis=1))
+    epic_keys = set(epic_df_copy[['FID', 'SSR']].apply(tuple, axis=1))
+    secu_keys = set(secuTrial_df_copy[['FID', 'SSR']].apply(tuple, axis=1))
+    matching_keys = epic_keys & secu_keys
+    
     logger.info(f"Found {len(matching_keys)} matching (FID, SSR) pairs for comparison")
+    logger.info(f"EPIC has {len(epic_keys)} unique (FID, SSR) pairs")
+    logger.info(f"SecuTrial has {len(secu_keys)} unique (FID, SSR) pairs")
 
     # Store mismatched results
     mismatched_results = []
@@ -397,6 +442,8 @@ def compare_epic_secuTrial(epic_df, secuTrial_df, mapping_df, value_mappings=Non
             'secu_type': secuTrial_dtype
         }
     
+    logger.info(f"Built {len(column_mappings)} column mappings for comparison")
+    
     # First, apply value mappings to EPIC data
     for col, mapping in value_mappings.items():
         if col in epic_df_copy.columns:
@@ -451,21 +498,27 @@ def compare_epic_secuTrial(epic_df, secuTrial_df, mapping_df, value_mappings=Non
             
             # Get the month for this record (use epic date if available, else secu date)
             record_date = None
-            if not epic_row.empty and 'DATE' in epic_row.columns and not pd.isna(epic_row['DATE'].iloc[0]):
+            month_name = 'Unknown'
+            
+            if 'DATE' in epic_row.columns and not epic_row.empty and not pd.isna(epic_row['DATE'].iloc[0]):
                 record_date = epic_row['DATE'].iloc[0]
-            elif not secu_row.empty and 'DATE' in secu_row.columns and not pd.isna(secu_row['DATE'].iloc[0]):
+            elif 'DATE' in secu_row.columns and not secu_row.empty and not pd.isna(secu_row['DATE'].iloc[0]):
                 record_date = secu_row['DATE'].iloc[0]
                 
-            # Skip if no valid date or not in April-December range
-            if record_date is None:
-                continue
-                
-            record_month = record_date.month
-            # Skip if not in our target month range (April-December)
-            if record_month < 4 or record_month > 12:
-                continue
-                
-            month_name = months[record_month]
+            # Determine month if we have a valid date
+            if record_date is not None:
+                try:
+                    record_month = record_date.month
+                    if 4 <= record_month <= 12:  # April-December range
+                        month_name = months[record_month]
+                    else:
+                        month_name = 'Out of Range'
+                except (AttributeError, TypeError):
+                    month_name = 'Invalid Date'
+            
+            # Use a default month if we can't determine it
+            if month_name not in monthly_stats:
+                month_name = 'April'  # Default fallback
                 
             # Both values are NaN/missing - count as match
             if pd.isna(epic_value) and pd.isna(secu_value):
@@ -697,9 +750,12 @@ def generate_comparison_report(mismatched_results, overall_stats, monthly_stats,
     # Top Problematic Variables
     report.write("## Top 10 Problematic Variables\n\n")
     top_vars = get_top_problematic_variables(variable_stats, sort_by='total_problems', top_n=10)
-    report.write(top_vars[['Variable', 'Total Comparisons', 'Match Percent', 'Mismatch Percent', 
-                         'EPIC Missing Percent', 'SecuTrial Missing Percent', 'EPIC Type', 'SecuTrial Type']]
-              .to_markdown(index=False))
+    if not top_vars.empty:
+        report.write(top_vars[['Variable', 'Total Comparisons', 'Match Percent', 'Mismatch Percent', 
+                             'EPIC Missing Percent', 'SecuTrial Missing Percent', 'EPIC Type', 'SecuTrial Type']]
+                  .to_markdown(index=False))
+    else:
+        report.write("No problematic variables found.\n")
     report.write("\n\n")
     
     # Variables with Type Mismatches
@@ -734,6 +790,10 @@ def restructure_mismatched_data(differences_df, epic_df):
     Returns:
         DataFrame: A structured DataFrame where mismatches are arranged in a single row per patient.
     """
+    if differences_df.empty:
+        logger.info("No mismatched data to restructure")
+        return pd.DataFrame()
+        
     # Standardize column names to prevent mismatches
     differences_df.rename(columns=lambda x: x.strip(), inplace=True)
 
@@ -742,6 +802,7 @@ def restructure_mismatched_data(differences_df, epic_df):
 
     if missing_columns:
         logger.error(f"Missing required columns in differences_df: {missing_columns}")
+        logger.info(f"Available columns: {list(differences_df.columns)}")
         raise ValueError(f"Missing required columns in differences_df: {missing_columns}")
 
     # Resolve duplicates by taking the first occurrence
@@ -751,44 +812,57 @@ def restructure_mismatched_data(differences_df, epic_df):
 
     differences_df = differences_df.groupby(["FID", "SSR", "EPIC Column"], as_index=False).first()
 
-    # Pivot the table to make each discrepancy a separate column
-    pivoted_df = differences_df.pivot(index=["FID", "SSR"], 
-                                    columns="EPIC Column", 
-                                    values=["SecuTrial Value", "EPIC Value"])
+    # Check if we have any data left after grouping
+    if differences_df.empty:
+        logger.warning("No data left after removing duplicates")
+        return pd.DataFrame()
 
-    # Flatten multi-level column names
-    pivoted_df.columns = [f"{col[1]}_st" if col[0] == "SecuTrial Value" else f"{col[1]}_ep" 
-                        for col in pivoted_df.columns]
+    try:
+        # Pivot the table to make each discrepancy a separate column
+        pivoted_df = differences_df.pivot(index=["FID", "SSR"], 
+                                        columns="EPIC Column", 
+                                        values=["SecuTrial Value", "EPIC Value"])
 
-    # Reset index to include FID and SSR as columns
-    pivoted_df.reset_index(inplace=True)
+        # Flatten multi-level column names
+        pivoted_df.columns = [f"{col[1]}_st" if col[0] == "SecuTrial Value" else f"{col[1]}_ep" 
+                            for col in pivoted_df.columns]
 
-    # Ensure column order follows the order in the original EPIC DataFrame
-    column_order = ["FID", "SSR"]
+        # Reset index to include FID and SSR as columns
+        pivoted_df.reset_index(inplace=True)
 
-    # Extract base column names from epic_df (without prefix/suffix)
-    base_columns = [col for col in epic_df.columns if not col.startswith(("FID", "SSR"))]
+        # Ensure column order follows the order in the original EPIC DataFrame
+        column_order = ["FID", "SSR"]
 
-    # Ensure `_st` (SecuTrial) columns appear first, then `_ep` (EPIC) columns
-    for col in base_columns:
-        if f"{col}_st" in pivoted_df.columns:
-            column_order.append(f"{col}_st")
-        if f"{col}_ep" in pivoted_df.columns:
-            column_order.append(f"{col}_ep")
+        # Extract base column names from epic_df (without prefix/suffix)
+        base_columns = [col for col in epic_df.columns if not col.startswith(("FID", "SSR"))]
 
-    # Check if any expected columns are missing
-    missing_expected_columns = [col for col in column_order if col not in pivoted_df.columns]
-    if missing_expected_columns:
-        logger.warning(f"Warning: Some expected columns are missing after pivot: {missing_expected_columns}")
+        # Ensure `_st` (SecuTrial) columns appear first, then `_ep` (EPIC) columns
+        for col in base_columns:
+            if f"{col}_st" in pivoted_df.columns:
+                column_order.append(f"{col}_st")
+            if f"{col}_ep" in pivoted_df.columns:
+                column_order.append(f"{col}_ep")
 
-    # Select only available columns and reorder
-    column_order = [col for col in column_order if col in pivoted_df.columns]
-    pivoted_df = pivoted_df[column_order]
+        # Check if any expected columns are missing
+        missing_expected_columns = [col for col in column_order if col not in pivoted_df.columns]
+        if missing_expected_columns:
+            logger.warning(f"Warning: Some expected columns are missing after pivot: {missing_expected_columns}")
 
-    # Fill NaN values with an empty string for better readability
-    pivoted_df.fillna("", inplace=True)
+        # Select only available columns and reorder
+        column_order = [col for col in column_order if col in pivoted_df.columns]
+        pivoted_df = pivoted_df[column_order]
 
-    return pivoted_df
+        # Fill NaN values with an empty string for better readability
+        pivoted_df.fillna("", inplace=True)
+
+        return pivoted_df
+        
+    except Exception as e:
+        logger.error(f"Error during pivot operation: {e}")
+        logger.info(f"Differences dataframe shape: {differences_df.shape}")
+        logger.info(f"Differences dataframe columns: {list(differences_df.columns)}")
+        # Return the original differences dataframe if pivot fails
+        return differences_df
 
 def main():
     """Main function for the validation service"""
@@ -837,7 +911,6 @@ def main():
         
         file_path_secuTrial = secuTrial_base_dir / 'SSR_cases_of_2024.xlsx'
         file_path_REVASC = REVASC_base_dir / 'report_SSR01_20250218-105747.xlsx'
-        file_path_EPIC = epic_base_dir / 'encounters.csv'
         
         # Check if required files exist
         if not file_path_secuTrial.exists():
@@ -847,32 +920,29 @@ def main():
         if not file_path_REVASC.exists():
             logger.error(f"Required REVASC file not found: {file_path_REVASC}")
             return
-            
-        if not file_path_EPIC.exists():
-            logger.error(f"Required EPIC file not found: {file_path_EPIC}")
-            # Try Excel version as fallback
-            file_path_EPIC = epic_base_dir / 'encounters.xlsx'
-            if not file_path_EPIC.exists():
-                logger.error(f"Fallback EPIC file not found: {file_path_EPIC}")
-                return
         
         # Read files
+        logger.info("Reading secuTrial and REVASC files...")
         df_secuTrial = safe_read_file(file_path_secuTrial, custom_reader=read_and_modify_secuTrial_export)
         df_REVASC = safe_read_file(file_path_REVASC, custom_reader=read_and_modify_secuTrial_export)
         
-        df_EPIC = safe_read_file(file_path_EPIC)
-            
-        if df_EPIC is None:
-            logger.error("Failed to load EPIC data")
-            return
-            
         # Check if dataframes are loaded
         if df_secuTrial is None or df_REVASC is None:
             logger.error("Failed to load secuTrial or REVASC data")
             return
             
         # Log successful data loading
-        logger.info(f"Successfully loaded data: secuTrial={df_secuTrial.shape}, REVASC={df_REVASC.shape}, EPIC={df_EPIC.shape}")
+        logger.info(f"Successfully loaded data: secuTrial={df_secuTrial.shape}, REVASC={df_REVASC.shape}")
+        
+        # Read and merge EPIC files
+        logger.info("Reading and merging EPIC files...")
+        df_EPIC_all = merge_all_epic_files(epic_base_dir, merge_column="PAT_ENC_CSN_ID")
+        
+        if df_EPIC_all.empty:
+            logger.error("Failed to load EPIC data or no EPIC files found")
+            return
+            
+        logger.info(f"Successfully merged EPIC data: {df_EPIC_all.shape}")
         
         # Unnamed columns check
         unnamed_columns_secuTrial = [col for col in df_secuTrial.columns if not isinstance(col, str) or not col or col.startswith('Unnamed')]
@@ -884,6 +954,7 @@ def main():
             logger.info(f'Unnamed columns in df_REVASC: {unnamed_columns_REVASC}')
         
         # Merge df_REVASC into df_secuTrial based on Case ID
+        logger.info("Merging secuTrial and REVASC data...")
         df_secuTrial_w_REVAS = df_secuTrial.merge(
             df_REVASC,
             how='left',
@@ -898,25 +969,60 @@ def main():
         logger.info(f'df_secuTrial_w_REVAS size: {df_secuTrial_w_REVAS.shape}')
         
         # Extract SSR from Case ID
-        df_secuTrial_w_REVAS['SSR'] = df_secuTrial_w_REVAS['Case ID'].str.extract(r'(\d+)$').astype(int)
+        df_secuTrial_w_REVAS['SSR'] = df_secuTrial_w_REVAS['Case ID'].str.extract(r'(\d+)').astype(int)
         df_secuTrial_w_REVAS.insert(1, 'SSR', df_secuTrial_w_REVAS.pop('SSR'))
         df_secuTrial_w_REVAS = df_secuTrial_w_REVAS.drop(columns=['nan'], errors='ignore')
         
         # Read ID log file and merge with data
-        id_log = pd.read_excel(base_dir / 'EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx')
+        id_log_path = base_dir / 'EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx'
+        
+        if not id_log_path.exists():
+            logger.error(f"ID log file not found: {id_log_path}")
+            return
+            
+        logger.info("Reading ID log file...")
+        id_log = pd.read_excel(id_log_path)
         
         # Set the first row as column names and drop it from the data
         id_log.columns = id_log.iloc[0]
         id_log = id_log.iloc[1:].reset_index(drop=True)
         
-        # Rename columns for consistency
-        id_log.rename(columns={'Fall-Nr.(FID)': 'FID', 'SSR Identification SSR-INS-000....': 'SSR'}, inplace=True)
+        # Rename columns for consistency (check available columns first)
+        logger.info(f"ID log columns: {list(id_log.columns)}")
+        
+        # Try different possible column names for FID and SSR
+        fid_col = None
+        ssr_col = None
+        
+        for col in id_log.columns:
+            if 'fall' in str(col).lower() or 'fid' in str(col).lower():
+                fid_col = col
+            elif 'ssr' in str(col).lower():
+                ssr_col = col
+        
+        if fid_col and ssr_col:
+            id_log.rename(columns={fid_col: 'FID', ssr_col: 'SSR'}, inplace=True)
+            logger.info(f"Renamed columns: {fid_col} -> FID, {ssr_col} -> SSR")
+        else:
+            logger.error(f"Could not find FID and SSR columns in ID log. Available: {list(id_log.columns)}")
+            return
         
         # Add FID to EPIC dataset if not already there
         if 'FID' not in df_EPIC_all.columns:
-            logger.info("Extracting FID from img.FID column in EPIC data")
-            df_EPIC_all['FID'] = df_EPIC_all['img.FID'].fillna(0).astype(int)
-            df_EPIC_all.insert(0, 'FID', df_EPIC_all.pop('FID'))
+            # Try to find FID column with prefix
+            fid_source_col = None
+            for col in df_EPIC_all.columns:
+                if 'fid' in col.lower():
+                    fid_source_col = col
+                    break
+            
+            if fid_source_col:
+                logger.info(f"Extracting FID from {fid_source_col} column in EPIC data")
+                df_EPIC_all['FID'] = df_EPIC_all[fid_source_col].fillna(0).astype(int)
+                df_EPIC_all.insert(0, 'FID', df_EPIC_all.pop('FID'))
+            else:
+                logger.error("No FID column found in EPIC data")
+                return
         
         # Merge with df_EPIC_all on 'FID' and reorder columns
         df_EPIC_all = df_EPIC_all.merge(id_log[['FID', 'SSR']], on='FID', how='left')
@@ -927,6 +1033,7 @@ def main():
         df_secuTrial_w_REVAS.insert(0, 'FID', df_secuTrial_w_REVAS.pop('FID'))  # Move 'FID' to the first column
         
         # Define value mappings
+        logger.info("Setting up value mappings...")
         yes_no_mapping = {0: 'no', 1: 'yes', False: 'no', True: 'yes'}
         bilateral_mapping = {0: 'no', 1: '', 2: 'right', 3: 'left', 4: 'bilateral'}
         prosthetic_valves_mapping = {0: 'None', 1: 'Biological', 2: 'Mechanical'}
@@ -972,10 +1079,6 @@ def main():
         value_mappings.update({col: yes_no_mapping for col in yes_no_columns})
         value_mappings.update({col: bilateral_mapping for col in bilateral_columns})
         
-        # Add DATE column to both datasets
-        df_EPIC_all['DATE'] = pd.to_datetime(df_EPIC_all['enct.arrival_date'])
-        df_secuTrial_w_REVAS['DATE'] = pd.to_datetime(df_secuTrial_w_REVAS['Arrival at hospital'])
-        
         # Load the mapping file
         map_dir = base_dir / 'EPIC2sT-pipeline'
         map_file_name = 'map_epic2sT_code_V2_20250224.xlsx'
@@ -983,11 +1086,20 @@ def main():
         
         if not map_file_path.exists():
             logger.error(f"Mapping file not found: {map_file_path}")
-            return
+            # Try to find any mapping file in the directory
+            mapping_files = list(map_dir.glob("*map*.xlsx"))
+            if mapping_files:
+                map_file_path = mapping_files[0]
+                logger.info(f"Using alternative mapping file: {map_file_path}")
+            else:
+                logger.error("No mapping file found in EPIC2sT-pipeline directory")
+                return
             
         # Load the column mapping Excel file
+        logger.info(f"Loading mapping file: {map_file_path}")
         df_mapping = pd.read_excel(map_file_path)
         logger.info(f"Loaded mapping file with shape: {df_mapping.shape}")
+        logger.info(f"Mapping columns: {list(df_mapping.columns)}")
         
         # Perform the comparison
         logger.info("Starting validation comparison...")
@@ -1000,19 +1112,25 @@ def main():
         output_dir = base_dir / 'EPIC-export-validation/validation-files'
         
         # Save the comparison report
+        logger.info("Generating validation report...")
         report = generate_comparison_report(mismatched_results, comparison_stats, monthly_percentage_stats, variable_stats)
         report_path = output_dir / f"validation_report_{timestamp}.md"
-        with open(report_path, 'w') as f:
+        with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report)
         logger.info(f"Report saved to {report_path}")
         
         # Restructure the mismatched data for easier viewing
+        logger.info("Restructuring mismatched data...")
         restructured_df = restructure_mismatched_data(mismatched_results, df_EPIC_all)
-        restructured_path = output_dir / f"report_mismatched_values_{timestamp}.xlsx"
-        restructured_df.to_excel(restructured_path, index=False)
-        logger.info(f"Mismatched values report saved to {restructured_path}")
+        if not restructured_df.empty:
+            restructured_path = output_dir / f"report_mismatched_values_{timestamp}.xlsx"
+            restructured_df.to_excel(restructured_path, index=False)
+            logger.info(f"Mismatched values report saved to {restructured_path}")
+        else:
+            logger.info("No mismatched data to save")
         
         # Save monthly statistics to Excel
+        logger.info("Saving monthly statistics...")
         monthly_stats_df = pd.DataFrame.from_dict(monthly_percentage_stats, orient='index')
         monthly_stats_path = output_dir / f"monthly_validation_stats_{timestamp}.xlsx"
         
@@ -1050,13 +1168,23 @@ def main():
         logger.info(f"Monthly statistics saved to {monthly_stats_path}")
         
         # Save the original dataframes for reference
+        logger.info("Saving reference dataframes...")
         df_EPIC_all.to_excel(output_dir / f"df_EPIC_all_{timestamp}.xlsx", index=False)
         df_secuTrial_w_REVAS.to_excel(output_dir / f"df_secuTrial_w_REVAS_{timestamp}.xlsx", index=False)
+        
+        # Print summary statistics to log
+        logger.info("=== VALIDATION SUMMARY ===")
+        logger.info(f"Total Comparisons: {comparison_stats['Total Comparisons']}")
+        logger.info(f"Matches: {comparison_stats['Matches']} ({comparison_stats['Matching Variables (%)']}%)")
+        logger.info(f"Mismatches: {comparison_stats['Mismatches']} ({comparison_stats['Mismatched Variables (%)']}%)")
+        logger.info(f"EPIC Missing: {comparison_stats['EPIC Missing']} ({comparison_stats['Variables Missing in EPIC (%)']}%)")
+        logger.info(f"SecuTrial Missing: {comparison_stats['SecuTrial Missing']} ({comparison_stats['Variables Missing in SecuTrial (%)']}%)")
         
         logger.info("Validation process completed successfully")
         
     except Exception as e:
         logger.error(f"Unexpected error in main function: {e}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     main()
