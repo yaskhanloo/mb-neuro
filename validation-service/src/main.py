@@ -18,6 +18,7 @@ import re
 import io
 from typing import Dict, Any, Optional, Tuple, List, Union
 
+# Setup logging
 def setup_logging():
     """Configure logging for the application"""
     log_dir = Path("/app/data/logs")
@@ -39,6 +40,7 @@ def setup_logging():
 
 logger = setup_logging()
 
+# Read files
 def read_and_modify_secuTrial_export(df):
     """
     Process secuTrial export dataframe by removing metadata rows and setting proper headers.
@@ -93,6 +95,7 @@ def safe_read_file(file_path, custom_reader=None):
     
     return None
 
+# EPIC merge
 def merge_single_file(file_path, merge_column, merged_df, prefix=""):
     """
     Merge a single file into the main DataFrame with optional column prefixing.
@@ -148,6 +151,7 @@ def merge_excel_files(directory, merge_column):
     
     return merged_df
 
+# Comparison function
 def compare_epic_secuTrial(epic_df, secuTrial_df, mapping_df, value_mappings=None):
     """
     Compares values and data types between EPIC and secuTrial DataFrames using a mapping file,
