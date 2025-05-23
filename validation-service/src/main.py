@@ -18,15 +18,14 @@ import re
 import io
 from typing import Dict, Any, Optional, Tuple, List, Union
 
-# Setup logging
 def setup_logging():
     """Configure logging for the application"""
     log_dir = Path("/app/data/logs")
     log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = log_dir / f"validation_service_{timestamp}.log"
-    
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -35,6 +34,7 @@ def setup_logging():
             logging.StreamHandler()
         ]
     )
+
     return logging.getLogger('epic-validation')
 
 logger = setup_logging()
@@ -42,68 +42,56 @@ logger = setup_logging()
 def read_and_modify_secuTrial_export(df):
     """
     Process secuTrial export dataframe by removing metadata rows and setting proper headers.
-    
-    SecuTrial exports typically have:
-    - Rows 0-5: Metadata/headers
-    - Row 6: Column names
-    - Row 7: Often empty or contains additional metadata
-    - Row 8+: Actual data
     """
-    logger.info("Processing secuTrial export dataframe")
     try:
-        # One-liner approach: skip metadata, set headers, clean up
-        return (df.iloc[6:]                    # Skip metadata rows
-                 .pipe(lambda x: x.set_axis(x.iloc[0], axis=1))  # Set column names
-                 .iloc[1:]                     # Remove header row
-                 .reset_index(drop=True)       # Reset index
-                 .dropna(how='all'))           # Remove empty rows
+        return (df.iloc[6:]
+                 .pipe(lambda x: x.set_axis(x.iloc[0], axis=1))
+                 .iloc[1:]
+                 .reset_index(drop=True)
+                 .dropna(how='all'))
     except Exception as e:
         logger.error(f"Error processing secuTrial export: {e}")
-        return None
+        return df
 
 def safe_read_file(file_path, custom_reader=None):
-    """Safely read a file (Excel or CSV) with an optional custom reader function"""
+    """
+    Safely reads a file (Excel or CSV), with an option for a custom reader function.
+    """
     file_path = Path(file_path)
-    
-    if not file_path.exists():
-        logger.error(f"File not found: {file_path}")
-        return None
-    
-    # File readers lookup
-    readers = {
-        '.xlsx': lambda p: pd.read_excel(p, engine='openpyxl', header=None),
-        '.xls': lambda p: pd.read_excel(p, engine='xlrd', header=None),
-        '.csv': lambda p: pd.read_csv(p)
-    }
-    
-    extension = file_path.suffix.lower()
-    reader = readers.get(extension)
-    
-    if not reader:
-        logger.error(f"Unsupported file type: {extension}. Supported: {list(readers.keys())}")
-        return None
-    
-    try:
-        logger.info(f"Reading {extension} file: {file_path.name}")
-        df = reader(file_path)
-        result = custom_reader(df) if custom_reader else df
-        
-        if result is not None:
-            logger.info(f"Successfully read file with shape: {result.shape}")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Failed to read {file_path.name}: {e}")
-        return None
+    file_extension = file_path.suffix.lower()
 
-def detect_encoding(file_path):
-    """Detect the encoding of a file using chardet"""
     try:
-        with open(file_path, 'rb') as f:
-            return chardet.detect(f.read(10000)).get('encoding', 'utf-8')
-    except Exception:
-        return 'utf-8'
+        if file_extension in [".xlsx", ".xls"]:
+            df = pd.read_excel(file_path, engine='openpyxl' if file_extension == ".xlsx" else 'xlrd')
+        elif file_extension == ".csv":
+            encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+            df = None
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(file_path, encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if df is None:
+                raise ValueError("Could not read CSV with any encoding")
+        else:
+            raise ValueError(f"Unsupported file type: {file_extension}")
+        
+        result = custom_reader(df) if custom_reader else df
+
+        if result is None or result.empty:
+            logger.warning(f"{file_path.name} is empty after processing.")
+            return None
+
+        logger.info(f"Successfully read file: {file_path.name}")
+        return result
+
+    except FileNotFoundError:
+        logger.error(f"File not found at {file_path}")
+    except Exception as e:
+        logger.error(f"Error reading file at {file_path}: {e}")
+    
+    return None
 
 def merge_single_file(file_path, merge_column, merged_df, prefix=""):
     """
@@ -868,32 +856,7 @@ def main():
         df_secuTrial = safe_read_file(file_path_secuTrial, custom_reader=read_and_modify_secuTrial_export)
         df_REVASC = safe_read_file(file_path_REVASC, custom_reader=read_and_modify_secuTrial_export)
         
-        # For EPIC data, use detect_encoding if it's a CSV
-        if file_path_EPIC.suffix.lower() == ".csv":
-            try:
-                encoding = detect_encoding(file_path_EPIC)
-                logger.info(f"Detected encoding for EPIC file: {encoding}")
-                df_EPIC = pd.read_csv(file_path_EPIC, encoding=encoding)
-            except Exception as e:
-                logger.error(f"Error reading CSV with detected encoding: {e}")
-                try:
-                    # Try with common encodings
-                    encodings = ['latin1', 'utf-8-sig', 'cp1252', 'iso-8859-1']
-                    for enc in encodings:
-                        try:
-                            df_EPIC = pd.read_csv(file_path_EPIC, encoding=enc)
-                            logger.info(f"Successfully read with encoding: {enc}")
-                            break
-                        except Exception:
-                            continue
-                    else:
-                        logger.error("Could not read CSV with any common encoding")
-                        return
-                except Exception as e:
-                    logger.error(f"Error in fallback CSV reading: {e}")
-                    return
-        else:
-            df_EPIC = safe_read_file(file_path_EPIC)
+        df_EPIC = safe_read_file(file_path_EPIC)
             
         if df_EPIC is None:
             logger.error("Failed to load EPIC data")
