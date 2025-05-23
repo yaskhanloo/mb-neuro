@@ -227,6 +227,211 @@ def merge_secuTrial_with_REVASC(df_secuTrial, df_REVASC, logger):
     except Exception as e:
         logger.error(f"REVASC merge failed: {e}. Using secuTrial data only.")
         return df_secuTrial.copy()
+    
+def load_and_process_id_log(id_log_path, logger):
+    """Load and process the ID log file."""
+    try:
+        id_log = pd.read_excel(id_log_path)
+        logger.info(f"ID log original columns: {list(id_log.columns)}")
+        
+        # Set first row as headers
+        id_log.columns = id_log.iloc[0]
+        id_log = id_log.iloc[1:].reset_index(drop=True)
+        logger.info(f"ID log columns after header fix: {list(id_log.columns)}")
+        
+        # Map the actual column names we found
+        column_mapping = {}
+        for col in id_log.columns:
+            if pd.isna(col):  # Skip NaN columns
+                continue
+            col_str = str(col).strip()
+            if 'Fall-Nr.' in col_str:
+                column_mapping[col] = 'FID'
+            elif 'SSR Identification' in col_str:
+                column_mapping[col] = 'SSR'
+        
+        logger.info(f"Column mapping: {column_mapping}")
+        id_log.rename(columns=column_mapping, inplace=True)
+        
+        # Remove NaN columns
+        id_log = id_log.loc[:, ~id_log.columns.isna()]
+        
+        # Check if we have the required columns
+        if 'FID' not in id_log.columns or 'SSR' not in id_log.columns:
+            logger.error(f"Required columns not found. Available: {list(id_log.columns)}")
+            logger.error("Expected to find 'Fall-Nr.' and 'SSR Identification' columns")
+            return None
+            
+        # Convert to appropriate data types
+        id_log['FID'] = pd.to_numeric(id_log['FID'], errors='coerce')
+        id_log['SSR'] = pd.to_numeric(id_log['SSR'], errors='coerce')
+        
+        # Remove rows with missing FID or SSR
+        initial_count = len(id_log)
+        id_log = id_log.dropna(subset=['FID', 'SSR'])
+        final_count = len(id_log)
+        
+        if final_count < initial_count:
+            logger.warning(f"Removed {initial_count - final_count} rows with missing FID/SSR")
+            
+        logger.info(f"Loaded ID log with {final_count} valid entries")
+        return id_log
+    except Exception as e:
+        logger.error(f"Failed to load ID log: {e}")
+        return None
+
+def add_patient_ids(df_epic, df_secuTrial, id_log, logger):
+    """Add FID and SSR columns to both dataframes."""
+    
+    # Add FID to EPIC data
+    if 'img.FID' in df_epic.columns:
+        df_epic['FID'] = df_epic['img.FID'].fillna(0).astype(int)
+        df_epic.insert(0, 'FID', df_epic.pop('FID'))
+        logger.info("Added FID to EPIC data")
+    else:
+        logger.warning("img.FID column not found in EPIC data")
+    
+    # Add SSR to secuTrial data
+    if 'Case ID' in df_secuTrial.columns:
+        df_secuTrial['SSR'] = df_secuTrial['Case ID'].str.extract(r'(\d+)$').astype(int)
+        df_secuTrial.insert(1, 'SSR', df_secuTrial.pop('SSR'))
+        # Clean up any 'nan' columns
+        df_secuTrial = df_secuTrial.drop(columns=['nan'], errors='ignore')
+        logger.info("Added SSR to secuTrial data")
+    else:
+        logger.warning("Case ID column not found in secuTrial data")
+    
+    # Merge with ID log
+    if id_log is not None:
+        # Check if required columns exist in ID log
+        if 'FID' not in id_log.columns:
+            logger.error(f"FID column not found in ID log. Available columns: {list(id_log.columns)}")
+            return df_epic, df_secuTrial
+            
+        if 'SSR' not in id_log.columns:
+            logger.error(f"SSR column not found in ID log. Available columns: {list(id_log.columns)}")
+            return df_epic, df_secuTrial
+        
+        # Merge EPIC with ID log
+        if 'FID' in df_epic.columns:
+            df_epic = df_epic.merge(id_log[['FID', 'SSR']], on='FID', how='left')
+            df_epic.insert(1, 'SSR', df_epic.pop('SSR'))
+            logger.info("Merged EPIC with ID log")
+        
+        # Merge secuTrial with ID log  
+        if 'SSR' in df_secuTrial.columns:
+            df_secuTrial = df_secuTrial.merge(id_log[['SSR', 'FID']], on='SSR', how='left')
+            df_secuTrial.insert(0, 'FID', df_secuTrial.pop('FID'))
+            logger.info("Merged secuTrial with ID log")
+        
+        logger.info("Successfully added patient IDs to both dataframes")
+    
+    return df_epic, df_secuTrial
+
+def find_matching_patients(df_epic, df_secuTrial, logger):
+    """Find patients that exist in both datasets."""
+    
+    # Find common patients by FID and SSR
+    common_keys = df_secuTrial[['FID', 'SSR']].merge(
+        df_epic[['FID', 'SSR']], 
+        on=['FID', 'SSR'], 
+        how='inner'
+    )
+    
+    # Filter to matching patients only
+    df_epic_common = df_epic.merge(common_keys, on=['FID', 'SSR'], how='inner')
+    df_secuTrial_common = df_secuTrial.merge(common_keys, on=['FID', 'SSR'], how='inner')
+    
+    logger.info(f"Found {len(common_keys)} matching patients")
+    logger.info(f"EPIC common shape: {df_epic_common.shape}")
+    logger.info(f"secuTrial common shape: {df_secuTrial_common.shape}")
+    
+    return df_epic_common, df_secuTrial_common
+
+def find_missing_patients(df_epic, df_secuTrial, logger):
+    """Find patients that exist in only one dataset."""
+    
+    # Patients only in secuTrial
+    df_secuTrial_only = df_secuTrial.merge(
+        df_epic[['FID', 'SSR']], 
+        on=['FID', 'SSR'], 
+        how='left', 
+        indicator=True
+    ).query('_merge == "left_only"').drop(columns=['_merge'])
+    
+    # Patients only in EPIC
+    df_epic_only = df_epic.merge(
+        df_secuTrial[['FID', 'SSR']], 
+        on=['FID', 'SSR'], 
+        how='left', 
+        indicator=True
+    ).query('_merge == "left_only"').drop(columns=['_merge'])
+    
+    logger.info(f"Patients only in secuTrial: {len(df_secuTrial_only)}")
+    logger.info(f"Patients only in EPIC: {len(df_epic_only)}")
+    
+    return df_secuTrial_only, df_epic_only
+
+def save_patient_analysis(df_epic_common, df_secuTrial_common, 
+                         df_epic_only, df_secuTrial_only, output_dir, logger):
+    """Save patient matching analysis to Excel files."""
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Save common patients
+    common_file = output_dir / f"common_patients_{timestamp}.xlsx"
+    with pd.ExcelWriter(common_file) as writer:
+        df_secuTrial_common.to_excel(writer, sheet_name="secuTrial_common", index=False)
+        df_epic_common.to_excel(writer, sheet_name="EPIC_common", index=False)
+    
+    # Save missing patients (with only relevant columns)
+    missing_file = output_dir / f"missing_patients_{timestamp}.xlsx"
+    
+    # Select relevant columns for comparison
+    secuTrial_cols = ['FID', 'SSR', 'Last name', 'First name', 'DOB', 'Arrival at hospital']
+    epic_cols = ['FID', 'SSR', 'enct.name_last', 'enct.name_first', 'enct.birth_date', 'enct.arrival_date']
+    
+    # Only include columns that exist
+    secuTrial_subset = df_secuTrial_only[[col for col in secuTrial_cols if col in df_secuTrial_only.columns]]
+    epic_subset = df_epic_only[[col for col in epic_cols if col in df_epic_only.columns]]
+    
+    with pd.ExcelWriter(missing_file) as writer:
+        secuTrial_subset.to_excel(writer, sheet_name="only_in_secuTrial", index=False)
+        epic_subset.to_excel(writer, sheet_name="only_in_EPIC", index=False)
+    
+    logger.info(f"Patient analysis saved to {common_file} and {missing_file}")
+    
+    return df_epic_common, df_secuTrial_common
+
+def process_patient_matching(df_epic, df_secuTrial, id_log_path, output_dir, logger):
+    """
+    Complete patient matching workflow.
+    
+    Returns:
+        tuple: (df_epic_common, df_secuTrial_common) - datasets with only matching patients
+    """
+    
+    # Load ID log
+    id_log = load_and_process_id_log(id_log_path, logger)
+    if id_log is None:
+        return df_epic, df_secuTrial  # Return original data if ID log fails
+    
+    # Add patient IDs
+    df_epic, df_secuTrial = add_patient_ids(df_epic, df_secuTrial, id_log, logger)
+    
+    # Find matching and missing patients
+    df_epic_common, df_secuTrial_common = find_matching_patients(df_epic, df_secuTrial, logger)
+    df_secuTrial_only, df_epic_only = find_missing_patients(df_epic, df_secuTrial, logger)
+    
+    # Save analysis
+    df_epic_common, df_secuTrial_common = save_patient_analysis(
+        df_epic_common, df_secuTrial_common, 
+        df_epic_only, df_secuTrial_only, 
+        output_dir, logger
+    )
+    
+    return df_epic_common, df_secuTrial_common
 
 def main():
     """Main function"""
@@ -299,20 +504,24 @@ def main():
             logger.warning("Merged EPIC DataFrame is empty.")
             return
 
-        # Load ID log
-        logger.info("Loading ID log...")
-        id_log_path = base_dir / 'EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx'
-        id_log = safe_read_file(id_log_path)
+        # Process patient matching
+        logger.info("Starting patient matching process...")
         
-        if id_log is not None:
-            # Process ID log
-            id_log.columns = id_log.iloc[0]
-            id_log = id_log.iloc[1:].reset_index(drop=True)
-            id_log.rename(columns={'Fall-Nr.': 'FID', 'SSR Identification SSR-INS-000....': 'SSR'}, inplace=True)
-            logger.info(f"Loaded ID log with {len(id_log)} entries")
-        else:
-            logger.error("Failed to load ID log")
-            return
+        # Set up paths
+        output_dir = base_dir / 'EPIC-export-validation/validation-files'
+        id_log_path = base_dir / 'EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx'
+        
+        # Process patient matching and get only matching patients
+        df_epic_common, df_secuTrial_common = process_patient_matching(
+            df_EPIC_all, 
+            df_secuTrial_w_REVAS, 
+            id_log_path, 
+            output_dir, 
+            logger
+        )
+        
+        logger.info("Patient matching completed successfully!")
+        logger.info(f"Common patients - EPIC: {df_epic_common.shape}, secuTrial: {df_secuTrial_common.shape}")
 
         # TODO: Add comparison logic here
         logger.info("Data loading completed successfully!")
