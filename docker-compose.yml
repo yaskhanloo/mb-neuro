@@ -1,65 +1,26 @@
-# Docker Compose version
-# version: '3.8'
+# Simplified Docker Compose for EPIC-secuTrial Pipeline
+version: '3.8'
 
 services:
-  validation-service:
+  epic-pipeline:
     build:
       context: .
-      dockerfile: validation-service/Dockerfile
-    container_name: epic-validation-service
+      dockerfile: Dockerfile
+    container_name: epic-pipeline
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs  
     environment:
-      - NODE_ENV=${NODE_ENV:-development}
       - BASE_DIR=/app/data
       - PYTHONPATH=/app
-      - PYTHONUNBUFFERED=1  # Ensure logs appear in real-time
+      - PYTHONUNBUFFERED=1
     networks:
-      - epic-data-network
-    #restart: unless-stopped
-
-  import-service:
-    build:
-      context: .
-      dockerfile: import-service/Dockerfile
-    container_name: epic-import-service
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs  
-    environment:
-      - NODE_ENV=${NODE_ENV:-development}
-      - BASE_DIR=/app/data
-      - PYTHONPATH=/app
-      - PYTHONUNBUFFERED=1  # Ensure logs appear in real-time
-    networks:
-      - epic-data-network
-    #restart: unless-stopped
-    depends_on:
-      - validation-service  # Run import after validation service
-
-  # Database service for future use
-  # database:
-  #   image: mysql:8.0
-  #   container_name: epic-database
-  #   environment:
-  #     - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-ServeMySql2009Secure}
-  #     - MYSQL_DATABASE=${DB_NAME:-medical-server}
-  #     - MYSQL_USER=${DB_USER:-epic_user}
-  #     - MYSQL_PASSWORD=${DB_PASSWORD:-ServeMySql2009Secure}
-  #   volumes:
-  #     - mysql_data:/var/lib/mysql
-  #     - ./database/init:/docker-entrypoint-initdb.d
-  #   ports:
-  #     - "3306:3306"
-  #   networks:
-  #     - epic-data-network
-  #   restart: unless-stopped
+      - epic-network
+    # Uncomment to run both validation and import
+    # command: >
+    #   sh -c "python /app/validation-service/src/main.py && 
+    #          python /app/import-service/src/main.py"
 
 networks:
-  epic-data-network:
+  epic-network:
     driver: bridge
-
-# Uncomment when adding database
-# volumes:
-#   mysql_data:
