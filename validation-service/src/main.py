@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""
+EPIC-secuTrial Validation Service
+Simple main script converted from validation_EPIC2sT_V1_20250522.ipynb
+
+Created by: Yasaman Safarkhanlo
+"""
+
+import os
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from datetime import datetime
+import chardet
+import logging
+import re
+import io
+from typing import Dict, Any, Optional, Tuple, List, Union
+
+# Global logger
+logger = None
+
+def setup_logging():
+    """Configure logging for the application"""
+    # Detect environment: if running in Docker, use /app/data/logs; else, use ./logs
+    base_dir = os.getenv('BASE_DIR', '.')
+    log_dir = Path(base_dir) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"validation_service_{timestamp}.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+
+    return logging.getLogger('epic-validation')
+
+def read_and_modify_secuTrial_export(df):
+    """
+    Process secuTrial export dataframe by removing metadata rows and setting proper headers.
+    """
+    try:
+        return (df.iloc[6:]
+                 .pipe(lambda x: x.set_axis(x.iloc[0], axis=1))
+                 .iloc[1:]
+                 .reset_index(drop=True)
+                 .dropna(how='all'))
+    except Exception as e:
+        logger.error(f"Error processing secuTrial export: {e}")
+        return df
+
+def safe_read_file(file_path, custom_reader=None):
+    """
+    Safely reads a file (Excel or CSV), with an option for a custom reader function.
+    """
+    file_path = Path(file_path)
+    file_extension = file_path.suffix.lower()
+
+    try:
+        if file_extension in [".xlsx", ".xls"]:
+            if custom_reader:
+                df = pd.read_excel(file_path, engine='openpyxl' if file_extension == ".xlsx" else 'xlrd', header=None)
+            else:
+                df = pd.read_excel(file_path, engine='openpyxl' if file_extension == ".xlsx" else 'xlrd')
+        elif file_extension == ".csv":
+            encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+            separators = [',', '\t', ';', '|']
+            df = None
+            for encoding in encodings:
+                for sep in separators:
+                    try:
+                        df = pd.read_csv(file_path, encoding=encoding, sep=sep, on_bad_lines='skip')
+                        if len(df.columns) > 1:  # Good separator found
+                            break
+                    except:
+                        continue
+                if df is not None and len(df.columns) > 1:
+                    break
+            if df is None:
+                # Fallback to simple CSV read
+                try:
+                    df = pd.read_csv(file_path, encoding='utf-8')
+                except:
+                    raise ValueError("Could not read CSV with any encoding or separator")
+        else:
+            raise ValueError(f"Unsupported file type: {file_extension}")
+        
+        result = custom_reader(df) if custom_reader else df
+
+        if result is None or result.empty:
+            logger.warning(f"{file_path.name} is empty after processing.")
+            return None
+
+        return result
+
+    except FileNotFoundError:
+        logger.error(f"File not found at {file_path}")
+    except Exception as e:
+        logger.error(f"Error reading file at {file_path}: {e}")
+    
+    return None
+
+def merge_single_epic_file(file_path, merge_column, merged_df, prefix=""):
+    """
+    Merge a single EPIC file into the main DataFrame with optional column prefixing.
+    """
+    df = safe_read_file(file_path)
+    if df is None:
+        logger.warning(f"Failed to read {file_path.name}")
+        return merged_df
+
+    if merge_column not in df.columns:
+        logger.warning(f"Merge column '{merge_column}' not found in {file_path.name}")
+        return merged_df
+
+    # Add prefix to all columns except the merge column
+    if prefix:
+        df = df.rename(columns={col: f"{prefix}{col}" for col in df.columns if col != merge_column})
+
+    # Merge logic
+    if merged_df.empty:
+        result_df = df.copy()
+        logger.info(f"Using {file_path.name} as base: shape={result_df.shape}")
+    else:
+        result_df = merged_df.merge(df, on=merge_column, how="outer")
+        logger.info(f"Merged {file_path.name}: shape={df.shape} → total={result_df.shape}")
+
+    return result_df
+
+def find_merge_column(directory):
+    """Find the correct merge column by checking the first file"""
+    directory = Path(directory)
+    file_patterns = ["*.xlsx", "*.xls", "*.csv"]
+    all_files = [f for pattern in file_patterns for f in directory.glob(pattern)]
+    
+    if not all_files:
+        return None
+        
+    # Check first file for common merge columns
+    first_file = all_files[0]
+    df = safe_read_file(first_file)
+    if df is not None and len(df.columns) > 1:
+        possible_columns = ['PAT_ENC_CSN_ID', 'PatientID', 'ID', 'Patient_ID', 'CSN_ID']
+        for col in possible_columns:
+            if col in df.columns:
+                logger.info(f"Found merge column: {col}")
+                return col
+        
+        logger.info(f"Available columns in {first_file.name}: {list(df.columns)}")
+        # Return the first column that looks like an ID
+        for col in df.columns:
+            if any(word in col.upper() for word in ['ID', 'CSN', 'PATIENT']):
+                logger.info(f"Using merge column: {col}")
+                return col
+    
+    return 'PAT_ENC_CSN_ID'  # Default fallback
+
+def merge_all_epic_files(directory, merge_column=None):
+    """
+    Merges all EPIC files in a directory based on a specific column, in a defined order.
+    """
+    directory = Path(directory)
+    if not directory.exists():
+        logger.error(f"Directory not found: {directory}")
+        raise FileNotFoundError(f"{directory} does not exist.")
+
+    file_patterns = ["*.xlsx", "*.xls", "*.csv"]
+    all_files = [f for pattern in file_patterns for f in directory.glob(pattern)]
+    logger.info(f"Found {len(all_files)} data files in {directory.name}")
+
+    # Auto-detect merge column if not provided
+    if merge_column is None:
+        merge_column = find_merge_column(directory)
+        if merge_column is None:
+            logger.error("Could not find a suitable merge column")
+            return pd.DataFrame()
+
+    file_order = ['enc', 'flow', 'imag', 'img', 'lab', 'med', 'mon']
+
+    def file_priority(file_path):
+        name = file_path.stem.lower()
+        for i, keyword in enumerate(file_order):
+            if keyword in name:
+                return i
+        return len(file_order)
+
+    def get_prefix(filename):
+        name = filename.lower()
+        if 'enc' in name: return 'enct.'
+        if 'flow' in name: return 'flow.'
+        if 'imag' in name or 'img' in name: return 'img.'
+        if 'lab' in name: return 'lab.'
+        if 'med' in name: return 'med.'
+        if 'mon' in name: return 'mon.'
+        return ""
+
+    sorted_files = sorted(all_files, key=file_priority)
+
+    merged_df = pd.DataFrame()
+    for file_path in sorted_files:
+        prefix = get_prefix(file_path.stem)
+        merged_df = merge_single_epic_file(file_path, merge_column, merged_df, prefix)
+    return merged_df
+
+def main():
+    """Main function"""
+    global logger
+    logger = setup_logging()
+    
+    logger.info("Starting EPIC-secuTrial Validation Service")
+    
+    # Use environment variable for base directory with fallback
+    base_dir = Path(os.environ.get("BASE_DIR", "."))
+    logger.info(f"Using base directory: {base_dir}")
+    
+    try:
+        # Find latest export folders
+        latest_sT_export = max((base_dir / "sT-files").glob("export-*"), 
+                             key=lambda x: x.stat().st_mtime, default=None)
+        latest_EPIC_export = max((base_dir / "EPIC-files").glob("export-*"), 
+                               key=lambda x: x.stat().st_mtime, default=None)
+
+        if latest_sT_export:
+            secuTrial_base_dir = latest_sT_export
+            REVASC_base_dir = secuTrial_base_dir / "REVASC"
+            logger.info(f"Latest secuTrial export found: {secuTrial_base_dir}")
+        else:
+            logger.error("No valid secuTrial export directory found.")
+            return
+
+        if latest_EPIC_export:
+            epic_base_dir = latest_EPIC_export
+            logger.info(f"Latest EPIC export found: {epic_base_dir}")
+        else:
+            logger.error("No valid EPIC export directory found.")
+            return
+
+        # Define file paths
+        file_path_secuTrial = secuTrial_base_dir / 'SSR_cases_of_2024.xlsx'
+        file_path_REVASC = REVASC_base_dir / 'report_SSR01_20250218-105747.xlsx'
+
+        # Read files
+        logger.info("Loading secuTrial data...")
+        df_secuTrial = safe_read_file(file_path_secuTrial, custom_reader=read_and_modify_secuTrial_export)
+        
+        logger.info("Loading REVASC data...")
+        df_REVASC = safe_read_file(file_path_REVASC, custom_reader=read_and_modify_secuTrial_export)
+
+        # Log data frame sizes
+        if df_secuTrial is not None and df_REVASC is not None:
+            logger.info(f"Data loaded successfully: secuTrial={df_secuTrial.shape}, REVASC={df_REVASC.shape}")
+        else:
+            logger.warning("One or more dataframes failed to load.")
+            return
+
+        # Merge all EPIC files
+        logger.info("Starting to merge EPIC files...")
+        df_EPIC_all = merge_all_epic_files(epic_base_dir)  # Auto-detect merge column
+        
+        if not df_EPIC_all.empty:
+            logger.info(f"Final merged EPIC DataFrame shape: {df_EPIC_all.shape}")
+            
+            # Save merged data for reference
+            output_dir = base_dir / "EPIC-export-validation/validation-files"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = output_dir / f"merged_epic_data_{timestamp}.csv"
+            df_EPIC_all.to_csv(output_path, index=False)
+            logger.info(f"Merged EPIC data saved to: {output_path}")
+        else:
+            logger.warning("Merged EPIC DataFrame is empty.")
+            return
+
+        # Load ID log
+        logger.info("Loading ID log...")
+        id_log_path = base_dir / 'EPIC2sT-pipeline/Identification_log_SSR_2024_ohne PW_26.03.25.xlsx'
+        id_log = safe_read_file(id_log_path)
+        
+        if id_log is not None:
+            # Process ID log
+            id_log.columns = id_log.iloc[0]
+            id_log = id_log.iloc[1:].reset_index(drop=True)
+            id_log.rename(columns={'Fall-Nr.': 'FID', 'SSR Identification SSR-INS-000....': 'SSR'}, inplace=True)
+            logger.info(f"Loaded ID log with {len(id_log)} entries")
+        else:
+            logger.error("Failed to load ID log")
+            return
+
+        # TODO: Add comparison logic here
+        logger.info("Data loading completed successfully!")
+        logger.info("Next step: Implement comparison logic")
+        
+    except Exception as e:
+        logger.error(f"Error in main function: {e}")
+        raise
+
+if __name__ == "__main__":
+    main()
