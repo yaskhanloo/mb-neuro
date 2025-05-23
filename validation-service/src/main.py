@@ -108,19 +108,11 @@ def detect_encoding(file_path):
 def merge_single_file(file_path, merge_column, merged_df, prefix=""):
     """
     Merge a single file into the main DataFrame with optional column prefixing.
-    
-    Args:
-        file_path: Path to the file
-        merge_column: Column name to merge on
-        merged_df: Main DataFrame to merge into
-        prefix: Optional prefix for column names
-        
-    Returns:
-        Updated merged DataFrame
     """
     # Read file
     df = safe_read_file(file_path)
     if df is None or merge_column not in df.columns:
+        logger.warning(f"Skipping {file_path.name}: file read failed or merge column '{merge_column}' not found")
         return merged_df
     
     # Add prefix and merge
@@ -132,13 +124,6 @@ def merge_single_file(file_path, merge_column, merged_df, prefix=""):
 def merge_excel_files(directory, merge_column):
     """
     Merges all EPIC files in a directory based on a specific column, in a defined order.
-    
-    Parameters:
-        directory (str or Path): Directory containing files.
-        merge_column (str): Column name to use for merging files.
-        
-    Returns:
-        pd.DataFrame
     """
     directory = Path(directory)
     
@@ -148,21 +133,30 @@ def merge_excel_files(directory, merge_column):
     # Get prefix for filename
     def get_prefix(filename):
         name = filename.lower()
-        if 'enc' in name: return 'enct.'
-        if 'flow' in name: return 'flow.'
-        if 'imag' in name or 'img' in name: return 'img.'
-        if 'lab' in name: return 'lab.'
-        if 'med' in name: return 'med.'
-        if 'mon' in name: return 'mon.'
-        return ""
+        prefixes = {
+            'enc': 'enct.', 
+            'flow': 'flow.', 
+            'imag': 'img.', 
+            'img': 'img.',
+            'lab': 'lab.', 
+            'med': 'med.', 
+            'mon': 'mon.'
+        }
+        return next((prefix for key, prefix in prefixes.items() if key in name), "")
     
-    # Find and merge all supported files
+    # Find all supported files (FIXED: proper glob patterns)
+    supported_extensions = ['.xlsx', '.xls', '.csv']
+    all_files = [f for f in directory.iterdir() 
+                 if f.is_file() and f.suffix.lower() in supported_extensions]
+    
+    logger.info(f"Found {len(all_files)} files to merge: {[f.name for f in all_files]}")
+    
+    # Merge all files
     merged_df = pd.DataFrame()
-    for file_path in directory.glob("*.{xlsx,xls,csv}"):
-        if file_path.suffix.lower() in {'.xlsx', '.xls', '.csv'}:
-            prefix = get_prefix(file_path.stem)
-            merged_df = merge_single_file(file_path, merge_column, merged_df, prefix)
-            logger.info(f"Merged {file_path.name} -> {prefix or 'no prefix'}")
+    for file_path in all_files:
+        prefix = get_prefix(file_path.stem)
+        merged_df = merge_single_file(file_path, merge_column, merged_df, prefix)
+        logger.info(f"Merged {file_path.name} -> {prefix or 'no prefix'} (shape: {merged_df.shape})")
     
     return merged_df
 
