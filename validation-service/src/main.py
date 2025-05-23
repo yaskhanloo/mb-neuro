@@ -208,6 +208,26 @@ def merge_all_epic_files(directory, merge_column=None):
         merged_df = merge_single_epic_file(file_path, merge_column, merged_df, prefix)
     return merged_df
 
+def merge_secuTrial_with_REVASC(df_secuTrial, df_REVASC, logger):
+    """Merge REVASC data into secuTrial DataFrame."""
+    try:
+        merged_df = df_secuTrial.merge(
+            df_REVASC,
+            how='left',
+            left_on='Case ID',
+            right_on='CaseID',
+            suffixes=('', '.revas')
+        )
+        merged_df.drop(columns=['CaseID'], inplace=True, errors='ignore')
+        merged_df.reset_index(drop=True, inplace=True)
+        
+        logger.info(f"Successfully merged secuTrial + REVASC: {merged_df.shape}")
+        return merged_df
+        
+    except Exception as e:
+        logger.error(f"REVASC merge failed: {e}. Using secuTrial data only.")
+        return df_secuTrial.copy()
+
 def main():
     """Main function"""
     global logger
@@ -260,8 +280,9 @@ def main():
             return
 
         # Merge all EPIC files
-        logger.info("Starting to merge EPIC files...")
+        logger.info("Starting to merge files...")
         df_EPIC_all = merge_all_epic_files(epic_base_dir)  # Auto-detect merge column
+        df_secuTrial_w_REVAS = merge_secuTrial_with_REVASC(df_secuTrial, df_REVASC, logger)
         
         if not df_EPIC_all.empty:
             logger.info(f"Final merged EPIC DataFrame shape: {df_EPIC_all.shape}")
